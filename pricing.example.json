@@ -1,0 +1,28 @@
+{
+  "gpt-4o": {
+    "input_uncached": 2.50,
+    "input_cached": 1.25,
+    "output": 10.00
+  },
+  "gpt-4o-mini": {
+    "input_uncached": 0.15,
+    "input_cached": 0.075,
+    "output": 0.60
+  },
+  "o3-mini": {
+    "input_uncached": 1.10,
+    "input_cached": 0.55,
+    "output": 4.40
+  },
+  "claude-3-5-sonnet": {
+    "input_uncached": 3.00,
+    "input_cached": 0.30,
+    "cache_write": 3.75,
+    "output": 15.00
+  },
+  "deepseek-r1": {
+    "input_uncached": 0.55,
+    "input_cached": 0.14,
+    "output": 2.19
+  }
+}
