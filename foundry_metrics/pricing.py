@@ -29,6 +29,17 @@ DEFAULT_RATES: Dict[str, ModelRate] = {
     "gpt-4o-realtime-preview": ModelRate(input_uncached=5.00, input_cached=2.50, output=20.00),
     "gpt-4o-audio-preview": ModelRate(input_uncached=2.50, input_cached=1.25, output=10.00),
 
+    # OpenAI GPT-5 & GPT-6 families (Azure AI Foundry)
+    "gpt-6-astra": ModelRate(input_uncached=5.00, input_cached=2.50, output=20.00),
+    "gpt-6": ModelRate(input_uncached=5.00, input_cached=2.50, output=20.00),
+    "gpt-5.6": ModelRate(input_uncached=2.50, input_cached=1.25, output=10.00),
+    "gpt-5.6-luna": ModelRate(input_uncached=2.50, input_cached=1.25, output=10.00),
+    "gpt-5.6-sol": ModelRate(input_uncached=2.50, input_cached=1.25, output=10.00),
+    "gpt-5.6-terra": ModelRate(input_uncached=2.50, input_cached=1.25, output=10.00),
+    "gpt-5.4-mini": ModelRate(input_uncached=0.15, input_cached=0.075, output=0.60),
+    "gpt-5.3-codex": ModelRate(input_uncached=2.00, input_cached=1.00, output=8.00),
+    "gpt-5": ModelRate(input_uncached=2.50, input_cached=1.25, output=10.00),
+
     # OpenAI Reasoning models
     "o1": ModelRate(input_uncached=15.00, input_cached=7.50, output=60.00),
     "o1-mini": ModelRate(input_uncached=3.00, input_cached=1.50, output=12.00),

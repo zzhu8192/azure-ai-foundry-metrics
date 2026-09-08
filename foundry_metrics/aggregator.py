@@ -127,29 +127,36 @@ class MetricsAggregator:
 
         # 2. Optionally query Azure Cost Management
         if self.enable_cost_management and resources:
-            distinct_subs = list(set(r.subscription_id for r in resources))
-            for sub_id in distinct_subs:
-                billed_costs, note = self.cost_client.query_subscription_costs(sub_id, window)
-                if note:
-                    period.cost_management_notes = note
+            if window.name == "Today":
+                period.cost_management_notes = (
+                    "Real-time estimated costs via Azure Monitor metrics (Cost Management pending 4-24hr lag)"
+                )
+            else:
+                import time
+                time.sleep(1.0)  # Gentle delay to prevent Cost Management 429 QPU rate limit
+                distinct_subs = list(set(r.subscription_id for r in resources))
+                for sub_id in distinct_subs:
+                    billed_costs, note = self.cost_client.query_subscription_costs(sub_id, window)
+                    if note:
+                        period.cost_management_notes = note
 
-                if billed_costs:
-                    period.cost_management_available = True
-                    # Reconcile billed costs to models
-                    for res in resources:
-                        if res.subscription_id == sub_id:
-                            res_cost = billed_costs.get(res.id.lower(), 0.0)
-                            if res_cost > 0.0:
-                                # Distribute across deployments proportionally or assign
-                                res_models = [m for m in period.models.values() if m.resource_name == res.name]
-                                if res_models:
-                                    tot_est = sum(m.cost.estimated_total_cost for m in res_models)
-                                    for m in res_models:
-                                        if tot_est > 0:
-                                            ratio = m.cost.estimated_total_cost / tot_est
-                                            m.cost.billed_cost = res_cost * ratio
-                                        else:
-                                            m.cost.billed_cost = res_cost / len(res_models)
+                    if billed_costs:
+                        period.cost_management_available = True
+                        # Reconcile billed costs to models
+                        for res in resources:
+                            if res.subscription_id == sub_id:
+                                res_cost = billed_costs.get(res.id.lower(), 0.0)
+                                if res_cost > 0.0:
+                                    # Distribute across deployments proportionally or assign
+                                    res_models = [m for m in period.models.values() if m.resource_name == res.name]
+                                    if res_models:
+                                        tot_est = sum(m.cost.estimated_total_cost for m in res_models)
+                                        for m in res_models:
+                                            if tot_est > 0:
+                                                ratio = m.cost.estimated_total_cost / tot_est
+                                                m.cost.billed_cost = res_cost * ratio
+                                            else:
+                                                m.cost.billed_cost = res_cost / len(res_models)
 
         # 3. Calculate period totals
         period.recalculate_totals()

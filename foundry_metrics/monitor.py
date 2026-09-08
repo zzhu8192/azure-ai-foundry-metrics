@@ -57,6 +57,7 @@ class MonitorMetricsClient:
             "api-version": api_version,
             "metricnames": metric_str,
             "timespan": window.azure_timespan,
+            "interval": "PT1H",
             "aggregation": "Total,Average",
             "$filter": "ModelDeploymentName eq '*'",
         }
@@ -106,6 +107,8 @@ class MonitorMetricsClient:
                 "cache_read_tokens": 0,
                 "cache_match_rate": 0.0,
                 "cache_write_tokens": 0,
+                "hourly_prompts": {},
+                "hourly_cache_rates": {},
                 "model_name": dep.model_name,
             }
 
@@ -115,16 +118,16 @@ class MonitorMetricsClient:
             timeseries = metric.get("timeseries", [])
 
             for ts in timeseries:
-                # Extract dimensions
+                # Extract dimensions with case-insensitive matching
                 metadata = ts.get("metadatavalues", [])
                 dep_name = "default"
                 model_name = ""
 
                 for meta in metadata:
-                    name_val = meta.get("name", {}).get("value", "")
-                    if name_val in ("ModelDeploymentName", "deploymentName"):
+                    name_val = meta.get("name", {}).get("value", "").lower()
+                    if name_val in ("modeldeploymentname", "deploymentname"):
                         dep_name = meta.get("value", dep_name)
-                    elif name_val in ("ModelName", "modelName"):
+                    elif name_val in ("modelname",):
                         model_name = meta.get("value", model_name)
 
                 if dep_name not in deployments_data:
@@ -134,6 +137,8 @@ class MonitorMetricsClient:
                         "cache_read_tokens": 0,
                         "cache_match_rate": 0.0,
                         "cache_write_tokens": 0,
+                        "hourly_prompts": {},
+                        "hourly_cache_rates": {},
                         "model_name": model_name or dep_name,
                     }
 
@@ -151,12 +156,26 @@ class MonitorMetricsClient:
 
                 if m_name in ("ProcessedPromptTokens", "InputTokens"):
                     entry["prompt_tokens"] += int(total_sum)
+                    for p in points:
+                        t_stamp = p.get("timeStamp")
+                        p_tot = p.get("total", 0.0) or 0.0
+                        if t_stamp and p_tot > 0:
+                            entry["hourly_prompts"][t_stamp] = p_tot
+
                 elif m_name in ("GeneratedTokens", "OutputTokens"):
                     entry["generated_tokens"] += int(total_sum)
+
                 elif m_name in ("cacheReadInputTokens",):
                     entry["cache_read_tokens"] += int(total_sum)
+
                 elif m_name in ("AzureOpenAIContextTokensCacheMatchRate",):
                     entry["cache_match_rate"] = max(entry["cache_match_rate"], avg_val)
+                    for p in points:
+                        t_stamp = p.get("timeStamp")
+                        p_avg = p.get("average")
+                        if t_stamp and p_avg is not None and p_avg > 0:
+                            entry["hourly_cache_rates"][t_stamp] = p_avg
+
                 elif m_name in ("ephemeral1hInputTokens", "ephemeral5mInputTokens"):
                     entry["cache_write_tokens"] += int(total_sum)
 
@@ -168,10 +187,18 @@ class MonitorMetricsClient:
             cache_read = vals["cache_read_tokens"]
             match_rate = vals["cache_match_rate"]
             cache_write = vals["cache_write_tokens"]
+            hourly_prompts = vals["hourly_prompts"]
+            hourly_cache_rates = vals["hourly_cache_rates"]
 
-            # Compute cached input tokens
+            # Compute cached input tokens with weighted hourly precision
             if cache_read > 0:
                 cached_input = cache_read
+            elif hourly_cache_rates and hourly_prompts:
+                weighted_cached = 0.0
+                for t_stamp, rate in hourly_cache_rates.items():
+                    p_tokens = hourly_prompts.get(t_stamp, 0.0)
+                    weighted_cached += p_tokens * (rate / 100.0)
+                cached_input = int(weighted_cached)
             elif match_rate > 0.0 and prompt_tokens > 0:
                 cached_input = int(prompt_tokens * (match_rate / 100.0))
             else:

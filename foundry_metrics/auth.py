@@ -31,7 +31,6 @@ class AzureAuthManager:
         # 4. AzureCliCredential
         # 5. AzureDeveloperCliCredential
         self._credential = DefaultAzureCredential(
-            tenant_id=self.tenant_id,
             exclude_interactive_browser_credential=True,
         )
         return self._credential
