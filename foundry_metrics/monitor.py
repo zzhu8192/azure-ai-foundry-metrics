@@ -53,11 +53,12 @@ class MonitorMetricsClient:
         api_version = "2024-02-01"
 
         url = f"https://management.azure.com{resource.id}/providers/Microsoft.Insights/metrics"
+        interval = "PT5M" if window.name == "Today" else "PT1H"
         params = {
             "api-version": api_version,
             "metricnames": metric_str,
             "timespan": window.azure_timespan,
-            "interval": "PT1H",
+            "interval": interval,
             "aggregation": "Total,Average",
             "$filter": "ModelDeploymentName eq '*'",
         }
@@ -97,20 +98,12 @@ class MonitorMetricsClient:
         resource: ResourceInfo,
     ) -> Dict[str, TokenBreakdown]:
         """Parse raw metrics JSON into deployment-keyed TokenBreakdowns."""
-        deployments_data: Dict[str, dict] = {}
+        # Collect raw metric data per deployment: dep_name -> m_name -> {total, avg, points, model_name}
+        dep_metrics: Dict[str, Dict[str, dict]] = {}
 
-        # Pre-seed with known deployments if available
+        # Pre-seed with known deployments
         for dep in resource.deployments:
-            deployments_data[dep.name] = {
-                "prompt_tokens": 0,
-                "generated_tokens": 0,
-                "cache_read_tokens": 0,
-                "cache_match_rate": 0.0,
-                "cache_write_tokens": 0,
-                "hourly_prompts": {},
-                "hourly_cache_rates": {},
-                "model_name": dep.model_name,
-            }
+            dep_metrics[dep.name] = {}
 
         metric_items = response_json.get("value", [])
         for metric in metric_items:
@@ -130,19 +123,9 @@ class MonitorMetricsClient:
                     elif name_val in ("modelname",):
                         model_name = meta.get("value", model_name)
 
-                if dep_name not in deployments_data:
-                    deployments_data[dep_name] = {
-                        "prompt_tokens": 0,
-                        "generated_tokens": 0,
-                        "cache_read_tokens": 0,
-                        "cache_match_rate": 0.0,
-                        "cache_write_tokens": 0,
-                        "hourly_prompts": {},
-                        "hourly_cache_rates": {},
-                        "model_name": model_name or dep_name,
-                    }
+                if dep_name not in dep_metrics:
+                    dep_metrics[dep_name] = {}
 
-                # Sum data points
                 points = ts.get("data", [])
                 total_sum = sum(p.get("total", 0.0) or 0.0 for p in points)
                 avg_val = 0.0
@@ -150,45 +133,61 @@ class MonitorMetricsClient:
                 if pts_with_avg:
                     avg_val = sum(pts_with_avg) / len(pts_with_avg)
 
-                entry = deployments_data[dep_name]
-                if model_name and not entry["model_name"]:
-                    entry["model_name"] = model_name
+                dep_metrics[dep_name][m_name] = {
+                    "total": total_sum,
+                    "avg": avg_val,
+                    "points": points,
+                    "model_name": model_name,
+                }
 
-                if m_name in ("ProcessedPromptTokens", "InputTokens"):
-                    entry["prompt_tokens"] += int(total_sum)
-                    for p in points:
-                        t_stamp = p.get("timeStamp")
-                        p_tot = p.get("total", 0.0) or 0.0
-                        if t_stamp and p_tot > 0:
-                            entry["hourly_prompts"][t_stamp] = p_tot
-
-                elif m_name in ("GeneratedTokens", "OutputTokens"):
-                    entry["generated_tokens"] += int(total_sum)
-
-                elif m_name in ("cacheReadInputTokens",):
-                    entry["cache_read_tokens"] += int(total_sum)
-
-                elif m_name in ("AzureOpenAIContextTokensCacheMatchRate",):
-                    entry["cache_match_rate"] = max(entry["cache_match_rate"], avg_val)
-                    for p in points:
-                        t_stamp = p.get("timeStamp")
-                        p_avg = p.get("average")
-                        if t_stamp and p_avg is not None and p_avg > 0:
-                            entry["hourly_cache_rates"][t_stamp] = p_avg
-
-                elif m_name in ("ephemeral1hInputTokens", "ephemeral5mInputTokens"):
-                    entry["cache_write_tokens"] += int(total_sum)
-
-        # Build TokenBreakdown objects
+        # Build TokenBreakdown objects without double-counting aliases
         result: Dict[str, TokenBreakdown] = {}
-        for dep_name, vals in deployments_data.items():
-            prompt_tokens = vals["prompt_tokens"]
-            generated_tokens = vals["generated_tokens"]
-            cache_read = vals["cache_read_tokens"]
-            match_rate = vals["cache_match_rate"]
-            cache_write = vals["cache_write_tokens"]
-            hourly_prompts = vals["hourly_prompts"]
-            hourly_cache_rates = vals["hourly_cache_rates"]
+        for dep_name, m_dict in dep_metrics.items():
+            if not m_dict:
+                continue
+
+            # 1. Resolve prompt tokens (ProcessedPromptTokens preferred over InputTokens alias)
+            prompt_metric = None
+            if "ProcessedPromptTokens" in m_dict and (m_dict["ProcessedPromptTokens"]["total"] > 0 or "InputTokens" not in m_dict):
+                prompt_metric = m_dict["ProcessedPromptTokens"]
+            elif "InputTokens" in m_dict:
+                prompt_metric = m_dict["InputTokens"]
+
+            prompt_tokens = int(prompt_metric["total"]) if prompt_metric else 0
+            hourly_prompts = {}
+            if prompt_metric:
+                for p in prompt_metric["points"]:
+                    t_stamp = p.get("timeStamp")
+                    p_tot = p.get("total", 0.0) or 0.0
+                    if t_stamp and p_tot > 0:
+                        hourly_prompts[t_stamp] = p_tot
+
+            # 2. Resolve generated/output tokens (GeneratedTokens preferred over OutputTokens alias)
+            output_metric = None
+            if "GeneratedTokens" in m_dict and (m_dict["GeneratedTokens"]["total"] > 0 or "OutputTokens" not in m_dict):
+                output_metric = m_dict["GeneratedTokens"]
+            elif "OutputTokens" in m_dict:
+                output_metric = m_dict["OutputTokens"]
+
+            generated_tokens = int(output_metric["total"]) if output_metric else 0
+
+            # 3. Cache tokens
+            cache_read = int(m_dict.get("cacheReadInputTokens", {}).get("total", 0.0))
+            cache_write = int(
+                m_dict.get("ephemeral1hInputTokens", {}).get("total", 0.0)
+                + m_dict.get("ephemeral5mInputTokens", {}).get("total", 0.0)
+            )
+
+            hourly_cache_rates = {}
+            cache_match_rate = 0.0
+            if "AzureOpenAIContextTokensCacheMatchRate" in m_dict:
+                cm = m_dict["AzureOpenAIContextTokensCacheMatchRate"]
+                cache_match_rate = cm["avg"]
+                for p in cm["points"]:
+                    t_stamp = p.get("timeStamp")
+                    p_avg = p.get("average")
+                    if t_stamp and p_avg is not None and p_avg > 0:
+                        hourly_cache_rates[t_stamp] = p_avg
 
             # Compute cached input tokens with weighted hourly precision
             if cache_read > 0:
@@ -199,12 +198,13 @@ class MonitorMetricsClient:
                     p_tokens = hourly_prompts.get(t_stamp, 0.0)
                     weighted_cached += p_tokens * (rate / 100.0)
                 cached_input = int(weighted_cached)
-            elif match_rate > 0.0 and prompt_tokens > 0:
-                cached_input = int(prompt_tokens * (match_rate / 100.0))
+            elif cache_match_rate > 0.0 and prompt_tokens > 0:
+                cached_input = int(prompt_tokens * (cache_match_rate / 100.0))
             else:
                 cached_input = 0
 
-            uncached_input = max(0, prompt_tokens - cached_input)
+            # Ensure prompt_tokens accounts for cached and writes
+            uncached_input = max(0, prompt_tokens - cached_input - cache_write)
 
             if uncached_input > 0 or cached_input > 0 or generated_tokens > 0 or cache_write > 0:
                 result[dep_name] = TokenBreakdown(

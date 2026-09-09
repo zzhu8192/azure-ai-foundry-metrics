@@ -15,7 +15,7 @@ class TokenBreakdown:
 
     @property
     def total_input(self) -> int:
-        return self.uncached_input + self.cached_input
+        return self.uncached_input + self.cached_input + self.cache_write
 
     @property
     def total_tokens(self) -> int:
