@@ -1,7 +1,7 @@
 """Mock data generator for demo mode and testing without Azure credentials."""
 
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from foundry_metrics.models import (
     CostBreakdown,
@@ -13,9 +13,10 @@ from foundry_metrics.pricing import PricingManager
 from foundry_metrics.time_windows import calculate_windows
 
 
-def get_demo_periods(timezone_name: str = "local") -> List[PeriodUsage]:
+def get_demo_periods(timezone_name: str = "local", periods_to_run: Optional[List[str]] = None,
+                     start: Optional[str] = None, end: Optional[str] = None) -> List[PeriodUsage]:
     """Generate realistic demo usage metrics for Today, Current Week, and Current Month."""
-    windows = calculate_windows(tz_name=timezone_name)
+    windows = calculate_windows(tz_name=timezone_name, start=start, end=end)
     pricing = PricingManager()
 
     # Scale factors: today=1x, week=5.5x, month=18x
@@ -23,6 +24,8 @@ def get_demo_periods(timezone_name: str = "local") -> List[PeriodUsage]:
         "today": 1.0,
         "week": 5.5,
         "month": 18.2,
+        "7d": 7.0,
+        "custom": 1.0,
     }
 
     # Base daily token usage for various models
@@ -97,7 +100,7 @@ def get_demo_periods(timezone_name: str = "local") -> List[PeriodUsage]:
 
     results: List[PeriodUsage] = []
 
-    for p_key in ("today", "week", "month"):
+    for p_key in periods_to_run or ("today", "week", "month"):
         w = windows[p_key]
         mult = scales[p_key]
 

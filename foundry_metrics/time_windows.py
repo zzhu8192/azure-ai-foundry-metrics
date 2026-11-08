@@ -1,7 +1,7 @@
 """Time window calculation for Today, Current Week, and Current Month."""
 
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone, tzinfo
 from typing import Dict, Optional
 import zoneinfo
 
@@ -9,7 +9,7 @@ import zoneinfo
 @dataclass
 class WindowBounds:
     """Start and end bounds for a monitoring time window."""
-    name: str  # "Today", "Current Week", "Current Month"
+    name: str
     start: datetime
     end: datetime
     timezone_name: str
@@ -34,27 +34,31 @@ class WindowBounds:
         """TimePeriod object for Azure Cost Management API."""
         return {
             "from": self.start_utc.strftime("%Y-%m-%dT00:00:00Z"),
-            "to": self.end_utc.strftime("%Y-%m-%dT23:59:59Z"),
+            "to": (self.end_utc - timedelta(microseconds=1)).strftime("%Y-%m-%dT23:59:59Z"),
         }
 
 
-def get_timezone(tz_name: str = "local") -> datetime.tzinfo:
+def get_timezone(tz_name: str = "local") -> tzinfo:
     """Resolve timezone object."""
     if tz_name.lower() == "utc":
         return timezone.utc
-    try:
-        # Try local system timezone
-        import time as _time
-        local_tz_name = _time.tzname[0]
-        # Use Python's standard local tz
-        return datetime.now().astimezone().tzinfo or timezone.utc
-    except Exception:
-        return timezone.utc
+    if tz_name.lower() == "local":
+        from tzlocal import get_localzone
+        return get_localzone()
+    return zoneinfo.ZoneInfo(tz_name)
+
+
+def parse_datetime(value: str, tz: tzinfo) -> datetime:
+    """Parse an ISO date/time; a date alone means midnight in the chosen zone."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=tz) if parsed.tzinfo is None else parsed.astimezone(tz)
 
 
 def calculate_windows(
     tz_name: str = "local",
     reference_dt: Optional[datetime] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
 ) -> Dict[str, WindowBounds]:
     """Calculate the exact bounds for Today, Current Week, and Current Month.
 
@@ -65,18 +69,23 @@ def calculate_windows(
     Returns:
         Dict mapping "today", "week", "month" to WindowBounds.
     """
-    if tz_name.lower() == "utc":
-        tz = timezone.utc
-        display_tz = "UTC"
-    else:
-        tz = get_timezone(tz_name)
-        display_tz = str(tz)
+    tz = get_timezone(tz_name)
+    display_tz = str(tz)
 
     now = reference_dt or datetime.now(tz)
     if now.tzinfo is None:
         now = now.replace(tzinfo=tz)
     else:
         now = now.astimezone(tz)
+
+    if start is not None:
+        custom_start = parse_datetime(start, tz)
+        custom_end = parse_datetime(end, tz) if end is not None else now
+        if custom_start.astimezone(timezone.utc) >= custom_end.astimezone(timezone.utc):
+            raise ValueError("--start must precede --end (the end is exclusive).")
+        return {"custom": WindowBounds("Custom", custom_start, custom_end, display_tz)}
+    if end is not None:
+        raise ValueError("--end requires --start.")
 
     # 1. Today: Start of today (00:00:00) to now
     today_start = datetime.combine(now.date(), time.min, tzinfo=tz)
@@ -107,6 +116,13 @@ def calculate_windows(
         "month": WindowBounds(
             name="Current Month",
             start=month_start,
+            end=now,
+            timezone_name=display_tz,
+        ),
+        # Subtract in UTC so 7D is exactly 168 hours even across a DST change.
+        "7d": WindowBounds(
+            name="Last 7 Days",
+            start=(now.astimezone(timezone.utc) - timedelta(days=7)).astimezone(tz),
             end=now,
             timezone_name=display_tz,
         ),

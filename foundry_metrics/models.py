@@ -46,9 +46,21 @@ class CostBreakdown:
     output_cost: float = 0.0
     billed_cost: Optional[float] = None
     currency: str = "USD"
+    foundry_estimated_cost: Optional[float] = None
+    estimate_source: str = "rate_card"
+    # Aggregated totals can combine portal estimates and rate-card fallbacks.
+    combined_estimated_cost: Optional[float] = None
 
     @property
     def estimated_total_cost(self) -> float:
+        if self.combined_estimated_cost is not None:
+            return self.combined_estimated_cost
+        if self.foundry_estimated_cost is not None:
+            return self.foundry_estimated_cost
+        return self.rate_card_total_cost
+
+    @property
+    def rate_card_total_cost(self) -> float:
         return (
             self.uncached_input_cost
             + self.cached_input_cost
@@ -58,8 +70,8 @@ class CostBreakdown:
 
     @property
     def effective_cost(self) -> float:
-        """Returns billed cost if available, otherwise estimated cost."""
-        return self.billed_cost if self.billed_cost is not None else self.estimated_total_cost
+        """Compatibility alias for the displayed estimate; billing is separate."""
+        return self.estimated_total_cost
 
     def add(self, other: "CostBreakdown") -> "CostBreakdown":
         billed = None
@@ -73,6 +85,13 @@ class CostBreakdown:
             output_cost=self.output_cost + other.output_cost,
             billed_cost=billed,
             currency=self.currency,
+            foundry_estimated_cost=(
+                self.foundry_estimated_cost + other.foundry_estimated_cost
+                if self.foundry_estimated_cost is not None and other.foundry_estimated_cost is not None
+                else None
+            ),
+            estimate_source=(self.estimate_source if self.estimate_source == other.estimate_source else "mixed"),
+            combined_estimated_cost=self.estimated_total_cost + other.estimated_total_cost,
         )
 
 
@@ -102,6 +121,8 @@ class PeriodUsage:
     total_cache_savings: float = 0.0
     cost_management_available: bool = False
     cost_management_notes: Optional[str] = None
+    estimate_notes: List[str] = field(default_factory=list)
+    unattributed_billed_cost: float = 0.0
 
     def recalculate_totals(self) -> None:
         """Recalculate period totals from model usage entries."""
@@ -115,6 +136,14 @@ class PeriodUsage:
             tot_savings += usage.cache_savings
 
         self.total_tokens = tot_tok
+        sources = {m.cost.estimate_source for m in self.models.values()}
+        tot_cost.estimate_source = next(iter(sources)) if len(sources) == 1 else "mixed" if sources else "rate_card"
+        portal_costs = [m.cost.foundry_estimated_cost for m in self.models.values()]
+        tot_cost.foundry_estimated_cost = (
+            sum(portal_costs) if portal_costs and all(c is not None for c in portal_costs) else None
+        )
+        if self.unattributed_billed_cost:
+            tot_cost.billed_cost = (tot_cost.billed_cost or 0.0) + self.unattributed_billed_cost
         self.total_cost = tot_cost
         self.total_cache_savings = tot_savings
 

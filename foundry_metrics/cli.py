@@ -17,6 +17,7 @@ from foundry_metrics.pricing import DEFAULT_RATES, PricingManager
 from foundry_metrics.views import format_currency, render_dashboard
 
 import shutil
+from foundry_metrics.time_windows import calculate_windows
 
 # Auto-load .env file if present
 load_dotenv()
@@ -29,9 +30,9 @@ console = Console(width=_target_w, height=40)
 @click.option(
     "--period",
     "-t",
-    type=click.Choice(["all", "today", "week", "month"], case_sensitive=False),
+    type=click.Choice(["all", "today", "week", "month", "7d"], case_sensitive=False),
     default="all",
-    help="Time period to report (all, today, week, or month).",
+    help="Time period: today, calendar week/month, rolling 7d, or all (today/week/month).",
 )
 @click.option(
     "--subscription-id",
@@ -52,10 +53,13 @@ console = Console(width=_target_w, height=40)
 @click.option(
     "--timezone",
     "-tz",
-    type=click.Choice(["local", "utc"], case_sensitive=False),
+    type=str,
     default="local",
-    help="Timezone for day/week/month cutoffs (default: local).",
+    help="Timezone: local, utc, or an IANA zone such as America/Chicago.",
 )
+@click.option("--deployment", help="Report only this exact deployment name.")
+@click.option("--start", help="Custom range start: ISO date/time in the selected timezone.")
+@click.option("--end", help="Exclusive custom range end: ISO date/time (default: now). Requires --start.")
 @click.option(
     "--format",
     "-f",
@@ -93,6 +97,9 @@ def main(
     resource_group: Optional[str],
     resource_name: Optional[str],
     timezone: str,
+    deployment: Optional[str],
+    start: Optional[str],
+    end: Optional[str],
     format: str,
     pricing_file: Optional[str],
     no_cost_management: bool,
@@ -107,11 +114,21 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
+    try:
+        calculate_windows(tz_name=timezone, start=start, end=end)
+    except (ValueError, KeyError) as exc:
+        raise click.UsageError(str(exc)) from exc
+    periods_to_run = ["custom"] if start is not None else (
+        ["today", "week", "month"] if period.lower() == "all" else [period.lower()]
+    )
+
     # 1. Demo Mode
     if demo:
-        periods = get_demo_periods(timezone_name=timezone)
-        if period.lower() != "all":
-            periods = [p for p in periods if p.period_name.lower().replace("current ", "") == period.lower()]
+        periods = get_demo_periods(timezone_name=timezone, periods_to_run=periods_to_run, start=start, end=end)
+        if deployment:
+            for sample in periods:
+                sample.models = {k: m for k, m in sample.models.items() if m.deployment_name.lower() == deployment.lower()}
+                sample.recalculate_totals()
         render_dashboard(periods, console, output_format=format)
         return
 
@@ -134,8 +151,6 @@ def main(
         enable_cost_management=not no_cost_management,
     )
 
-    periods_to_run = ["today", "week", "month"] if period.lower() == "all" else [period.lower()]
-
     with console.status("[bold cyan]Scanning Azure AI Foundry resources and querying metrics...[/bold cyan]"):
         try:
             sub_list = [subscription_id] if subscription_id else None
@@ -145,6 +160,9 @@ def main(
                 target_name=resource_name,
                 timezone_name=timezone,
                 periods_to_run=periods_to_run,
+                target_deployment=deployment,
+                start=start,
+                end=end,
             )
         except Exception as exc:
             console.print(f"[bold red]Error querying Azure metrics:[/bold red] {exc}")

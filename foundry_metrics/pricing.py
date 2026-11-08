@@ -6,6 +6,7 @@ All rates are specified in USD per 1,000,000 (1M) tokens.
 import json
 import os
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -30,8 +31,11 @@ DEFAULT_RATES: Dict[str, ModelRate] = {
     "gpt-4o-audio-preview": ModelRate(input_uncached=2.50, input_cached=1.25, output=10.00),
 
     # OpenAI GPT-5 & GPT-6 families (Azure AI Foundry)
-    "gpt-6-astra": ModelRate(input_uncached=5.00, input_cached=2.50, output=20.00),
-    "gpt-6": ModelRate(input_uncached=5.00, input_cached=2.50, output=20.00),
+    # Global Standard, short context. Portal estimates take precedence over these
+    # reference prices; use overrides for other deployment types and agreements.
+    "gpt-6.1-sol": ModelRate(input_uncached=2.00, input_cached=0.10, output=10.00, cache_write=2.50),
+    "gpt-6-sol": ModelRate(input_uncached=2.00, input_cached=0.20, output=10.00, cache_write=2.50),
+    "gpt-6-astra": ModelRate(input_uncached=10.00, input_cached=1.00, output=50.00, cache_write=12.50),
     "gpt-5.6": ModelRate(input_uncached=5.00, input_cached=0.50, output=30.00, cache_write=6.25),
     "gpt-5.6-sol": ModelRate(input_uncached=5.00, input_cached=0.50, output=30.00, cache_write=6.25),
     "gpt-5.6-terra": ModelRate(input_uncached=2.00, input_cached=0.20, output=12.00, cache_write=2.50),
@@ -94,6 +98,7 @@ class PricingManager:
         self.rates: Dict[str, ModelRate] = dict(DEFAULT_RATES)
         if custom_rates:
             self.rates.update(custom_rates)
+        self._warned_models = set()
 
     @classmethod
     def from_file(cls, path_or_str: Optional[str] = None) -> "PricingManager":
@@ -140,9 +145,19 @@ class PricingManager:
 
         # 3. Substring matching for well-known keys
         for key, rate in sorted(self.rates.items(), key=lambda item: len(item[0]), reverse=True):
-            if key in cleaned or key in raw:
+            # Match complete model names, allowing deployment decorations and
+            # date suffixes without treating gpt-6.1 as gpt-6 (or gpt-5.6 as gpt-5).
+            pattern = rf"(?<![a-z0-9]){re.escape(key)}(?![a-z0-9.])"
+            if re.search(pattern, cleaned) or re.search(pattern, raw):
                 return key, rate
 
+        if raw not in self._warned_models:
+            warnings.warn(
+                f"No rate card for {model_identifier!r}; using fallback prices. "
+                "Supply --pricing-file for a reliable rate-card estimate.",
+                stacklevel=2,
+            )
+            self._warned_models.add(raw)
         return raw, FALLBACK_RATE
 
     def calculate_cost(

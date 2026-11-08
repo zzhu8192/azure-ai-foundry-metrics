@@ -12,6 +12,10 @@ from rich.table import Table
 from foundry_metrics.models import PeriodUsage
 
 
+def format_cost_source(source: str) -> str:
+    return {"foundry_metric": "Foundry", "rate_card": "Rate card", "mixed": "Mixed"}.get(source, source)
+
+
 def format_tokens(num: int, compact: bool = False) -> str:
     """Format large token counts with commas or compact notation (B/M/K)."""
     if not compact:
@@ -138,8 +142,9 @@ def _render_single_period_table(
         style="bold yellow",
         footer=format_currency(period.total_cost.estimated_total_cost),
     )
+    table.add_column("Cost Source", footer=format_cost_source(period.total_cost.estimate_source))
 
-    has_billed = any(m.cost.billed_cost is not None for m in period.models.values())
+    has_billed = period.total_cost.billed_cost is not None
     if has_billed:
         billed_tot = period.total_cost.billed_cost or 0.0
         table.add_column(
@@ -176,6 +181,7 @@ def _render_single_period_table(
             format_tokens(m.tokens.output, compact=compact),
             format_tokens(m.tokens.total_tokens, compact=compact),
             format_currency(m.cost.estimated_total_cost),
+            format_cost_source(m.cost.estimate_source),
         ]
         if has_billed:
             b_str = format_currency(m.cost.billed_cost) if m.cost.billed_cost is not None else "-"
@@ -188,11 +194,16 @@ def _render_single_period_table(
     # Highlight summary panel
     savings_str = format_currency(period.total_cache_savings)
     savings_text = f"[bold green]{savings_str}[/bold green] saved via prompt caching ({period.total_tokens.cache_hit_rate:.1f}% hit rate)"
-    note_text = f"\n[dim]Note: {period.cost_management_notes}[/dim]" if period.cost_management_notes else ""
+    notes = [f"Estimate source: {format_cost_source(period.total_cost.estimate_source)}.", *period.estimate_notes]
+    if period.unattributed_billed_cost:
+        notes.append(f"Billed total includes {format_currency(period.unattributed_billed_cost)} that cannot be attributed to a deployment.")
+    if period.cost_management_notes:
+        notes.append(period.cost_management_notes)
+    note_text = "\n[dim]" + "\n".join(notes) + "[/dim]"
 
     summary_panel = Panel(
-        f"[bold]Total Azure Cost / Credits:[/bold] [bold yellow]{format_currency(period.total_cost.effective_cost)}[/bold yellow]  |  "
-        f"[bold]Cache Savings:[/bold] {savings_text}  |  "
+        f"[bold]Estimated Azure Cost:[/bold] [bold yellow]{format_currency(period.total_cost.estimated_total_cost)}[/bold yellow]  |  "
+        f"[bold]Est. Cache Savings:[/bold] {savings_text}  |  "
         f"[bold]Total Tokens:[/bold] [bold magenta]{format_tokens(period.total_tokens.total_tokens, compact=False)}[/bold magenta]"
         f"{note_text}",
         border_style="green" if period.total_cache_savings > 0 else "yellow",
@@ -249,6 +260,7 @@ def render_side_by_side_summary(
         *[format_currency(p.total_cost.estimated_total_cost) for p in periods],
         style="bold yellow",
     )
+    table.add_row("Estimate Source", *[format_cost_source(p.total_cost.estimate_source) for p in periods])
 
     has_any_billed = any(p.total_cost.billed_cost is not None for p in periods)
     if has_any_billed:
@@ -279,6 +291,7 @@ def render_json(periods: List[PeriodUsage], console: Console) -> None:
             "total_tokens": {
                 "uncached_input": p.total_tokens.uncached_input,
                 "cached_input": p.total_tokens.cached_input,
+                "cache_write": p.total_tokens.cache_write,
                 "total_input": p.total_tokens.total_input,
                 "cache_hit_rate_pct": round(p.total_tokens.cache_hit_rate, 2),
                 "output": p.total_tokens.output,
@@ -289,7 +302,13 @@ def render_json(periods: List[PeriodUsage], console: Console) -> None:
                 "billed_usd": round(p.total_cost.billed_cost, 4) if p.total_cost.billed_cost is not None else None,
                 "effective_usd": round(p.total_cost.effective_cost, 4),
                 "cache_savings_usd": round(p.total_cache_savings, 4),
+                "source": p.total_cost.estimate_source,
+                "foundry_estimated_usd": p.total_cost.foundry_estimated_cost,
+                "rate_card_estimated_usd": round(p.total_cost.rate_card_total_cost, 4),
+                "unattributed_billed_usd": round(p.unattributed_billed_cost, 4),
             },
+            "estimate_notes": p.estimate_notes,
+            "billing_notes": p.cost_management_notes,
             "models": {},
         }
         for k, m in p.models.items():
@@ -301,6 +320,7 @@ def render_json(periods: List[PeriodUsage], console: Console) -> None:
                 "tokens": {
                     "uncached_input": m.tokens.uncached_input,
                     "cached_input": m.tokens.cached_input,
+                    "cache_write": m.tokens.cache_write,
                     "total_input": m.tokens.total_input,
                     "cache_hit_rate_pct": round(m.tokens.cache_hit_rate, 2),
                     "output": m.tokens.output,
@@ -311,6 +331,9 @@ def render_json(periods: List[PeriodUsage], console: Console) -> None:
                     "billed_usd": round(m.cost.billed_cost, 4) if m.cost.billed_cost is not None else None,
                     "effective_usd": round(m.cost.effective_cost, 4),
                     "cache_savings_usd": round(m.cache_savings, 4),
+                    "source": m.cost.estimate_source,
+                    "foundry_estimated_usd": m.cost.foundry_estimated_cost,
+                    "rate_card_estimated_usd": round(m.cost.rate_card_total_cost, 4),
                 },
             }
         out.append(p_dict)
@@ -337,6 +360,9 @@ def render_csv(periods: List[PeriodUsage], console: Console) -> None:
         "EstimatedCostUSD",
         "BilledCostUSD",
         "CacheSavingsUSD",
+        "CostSource",
+        "FoundryEstimatedCostUSD",
+        "RateCardEstimatedCostUSD",
     ])
 
     for p in periods:
@@ -355,6 +381,9 @@ def render_csv(periods: List[PeriodUsage], console: Console) -> None:
                 f"{m.cost.estimated_total_cost:.4f}",
                 f"{m.cost.billed_cost:.4f}" if m.cost.billed_cost is not None else "",
                 f"{m.cache_savings:.4f}",
+                m.cost.estimate_source,
+                f"{m.cost.foundry_estimated_cost:.4f}" if m.cost.foundry_estimated_cost is not None else "",
+                f"{m.cost.rate_card_total_cost:.4f}",
             ])
         # Period total row
         writer.writerow([
@@ -371,6 +400,9 @@ def render_csv(periods: List[PeriodUsage], console: Console) -> None:
             f"{p.total_cost.estimated_total_cost:.4f}",
             f"{p.total_cost.billed_cost:.4f}" if p.total_cost.billed_cost is not None else "",
             f"{p.total_cache_savings:.4f}",
+            p.total_cost.estimate_source,
+            f"{p.total_cost.foundry_estimated_cost:.4f}" if p.total_cost.foundry_estimated_cost is not None else "",
+            f"{p.total_cost.rate_card_total_cost:.4f}",
         ])
 
-    console.print(output.getvalue(), end="")
+    console.print(output.getvalue(), end="", markup=False, highlight=False, soft_wrap=True)

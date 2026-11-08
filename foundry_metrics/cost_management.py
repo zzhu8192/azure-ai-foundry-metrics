@@ -46,7 +46,9 @@ def match_meter_to_model(meter_name: str, model_names: List[str]) -> Optional[st
         m_norm = re.sub(r"[-_]", " ", m.lower())
         m_parts = [p for p in m_norm.split() if p not in ("gpt", "azure", "openai", "model")]
         core_str = " ".join(m_parts)
-        if m_norm in meter_norm or (core_str and core_str in meter_norm):
+        if re.search(rf"(?<![a-z0-9]){re.escape(m_norm)}(?![a-z0-9.])", meter_norm) or (
+            core_str and re.search(rf"(?<![a-z0-9]){re.escape(core_str)}(?![a-z0-9.])", meter_norm)
+        ):
             return m
     return None
 

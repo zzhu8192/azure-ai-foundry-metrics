@@ -7,4 +7,6 @@ requests>=2.31.0
 rich>=13.7.0
 click>=8.1.0
 python-dotenv>=1.0.0
+tzlocal>=5.2
+tzdata>=2024.1; sys_platform == "win32"
 pytest>=8.0.0
