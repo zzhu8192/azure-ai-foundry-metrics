@@ -233,3 +233,8 @@ uv run --locked pytest tests/
 ```
 
 Dependencies are defined in `pyproject.toml` and pinned in `uv.lock`. After changing dependencies, run `uv lock` and commit both files.
+
+## License
+
+Project source code is available under the [MIT License](LICENSE).
+Third-party dependencies retain their respective licenses.
