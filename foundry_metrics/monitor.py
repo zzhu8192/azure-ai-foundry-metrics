@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 COST_METRIC = "FoundryModelEstimatedCost"
 CACHE_RATE_METRICS = ("AzureOpenAIContextTokensCacheMatchRate", "TokensCacheMatchRate")
 METRICS_TO_QUERY = [
-    "InputTokens", "OutputTokens", "ProcessedPromptTokens", "GeneratedTokens",
+    "InputTokens", "OutputTokens", "TotalTokens", "ProcessedPromptTokens", "GeneratedTokens",
     "cacheReadInputTokens", "ephemeral1hInputTokens", "ephemeral5mInputTokens",
     *CACHE_RATE_METRICS, COST_METRIC,
 ]
@@ -25,6 +25,7 @@ class ResourceMetrics:
     tokens: Dict[str, TokenBreakdown] = field(default_factory=dict)
     estimated_costs: Dict[str, float] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
+    metric_totals: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
 
 class MonitorMetricsClient:
@@ -109,6 +110,11 @@ class MonitorMetricsClient:
                     result.notes.append(f"{resource.name}: Monitor query failed ({response.status_code}).")
             result.tokens = self._parse_metrics_response(raw, resource)
             result.estimated_costs = self._parse_estimated_costs(raw, resource)
+            result.metric_totals = {
+                key: {name: metric["total"] for name, metric in metrics.items()
+                      if any(p.get("total") is not None for p in metric["points"])}
+                for key, metrics in self._collect_metrics(raw, resource).items()
+            }
         except Exception as exc:
             logger.warning("Could not query Monitor for %s: %s", resource.name, exc)
             result.notes.append(f"{resource.name}: Monitor query unavailable.")
@@ -186,10 +192,18 @@ class MonitorMetricsClient:
                     ))
             cached_input = min(max(0, cached_input), max(0, prompt_tokens))
             cache_write = min(max(0, cache_write), max(0, prompt_tokens - cached_input))
+            total_metric = metrics.get("TotalTokens")
+            reported_total = (
+                int(total_metric["total"])
+                if total_metric and any(p.get("total") is not None for p in total_metric["points"])
+                else None
+            )
             tokens = TokenBreakdown(
                 uncached_input=max(0, prompt_tokens - cached_input - cache_write),
                 cached_input=cached_input, cache_write=cache_write, output=output,
+                reported_total=reported_total,
+                total_source="TotalTokens" if reported_total is not None else "input_plus_output",
             )
-            if tokens.total_tokens:
+            if tokens.component_total_tokens or reported_total is not None:
                 result[key] = tokens
         return result

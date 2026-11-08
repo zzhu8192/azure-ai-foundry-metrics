@@ -195,6 +195,7 @@ def _render_single_period_table(
     savings_str = format_currency(period.total_cache_savings)
     savings_text = f"[bold green]{savings_str}[/bold green] saved via prompt caching ({period.total_tokens.cache_hit_rate:.1f}% hit rate)"
     notes = [f"Estimate source: {format_cost_source(period.total_cost.estimate_source)}.", *period.estimate_notes]
+    notes.insert(1, f"Token total source: {period.total_tokens.total_source}.")
     if period.unattributed_billed_cost:
         notes.append(f"Billed total includes {format_currency(period.unattributed_billed_cost)} that cannot be attributed to a deployment.")
     if period.cost_management_notes:
@@ -254,6 +255,9 @@ def render_side_by_side_summary(
         *[format_tokens(p.total_tokens.total_tokens, compact=compact) for p in periods],
         style="bold magenta",
     )
+    table.add_row("Token Total Source", *[p.total_tokens.total_source for p in periods])
+    if any(p.total_tokens.total_difference for p in periods):
+        table.add_row("Input + Output Tokens", *[format_tokens(p.total_tokens.component_total_tokens, compact=compact) for p in periods])
     table.add_section()
     table.add_row(
         "Est. Azure Cost",
@@ -296,6 +300,9 @@ def render_json(periods: List[PeriodUsage], console: Console) -> None:
                 "cache_hit_rate_pct": round(p.total_tokens.cache_hit_rate, 2),
                 "output": p.total_tokens.output,
                 "total": p.total_tokens.total_tokens,
+                "source": p.total_tokens.total_source,
+                "input_plus_output": p.total_tokens.component_total_tokens,
+                "reported_total_difference": p.total_tokens.total_difference,
             },
             "total_cost": {
                 "estimated_usd": round(p.total_cost.estimated_total_cost, 4),
@@ -325,7 +332,11 @@ def render_json(periods: List[PeriodUsage], console: Console) -> None:
                     "cache_hit_rate_pct": round(m.tokens.cache_hit_rate, 2),
                     "output": m.tokens.output,
                     "total": m.tokens.total_tokens,
+                    "source": m.tokens.total_source,
+                    "input_plus_output": m.tokens.component_total_tokens,
+                    "reported_total_difference": m.tokens.total_difference,
                 },
+                "metric_totals": m.metric_totals,
                 "cost": {
                     "estimated_usd": round(m.cost.estimated_total_cost, 4),
                     "billed_usd": round(m.cost.billed_cost, 4) if m.cost.billed_cost is not None else None,

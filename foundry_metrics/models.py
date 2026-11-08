@@ -12,6 +12,8 @@ class TokenBreakdown:
     cached_input: int = 0
     cache_write: int = 0
     output: int = 0
+    reported_total: Optional[int] = None
+    total_source: str = "input_plus_output"
 
     @property
     def total_input(self) -> int:
@@ -19,7 +21,16 @@ class TokenBreakdown:
 
     @property
     def total_tokens(self) -> int:
+        return self.reported_total if self.reported_total is not None else self.component_total_tokens
+
+    @property
+    def component_total_tokens(self) -> int:
         return self.total_input + self.output
+
+    @property
+    def total_difference(self) -> int:
+        """Difference between the reported total and separately ingested components."""
+        return self.total_tokens - self.component_total_tokens
 
     @property
     def cache_hit_rate(self) -> float:
@@ -29,11 +40,21 @@ class TokenBreakdown:
         return (self.cached_input / self.total_input) * 100.0
 
     def add(self, other: "TokenBreakdown") -> "TokenBreakdown":
+        source = self.total_source if self.total_source == other.total_source else "mixed"
+        if not self.component_total_tokens and self.reported_total is None:
+            source = other.total_source
+        elif not other.component_total_tokens and other.reported_total is None:
+            source = self.total_source
         return TokenBreakdown(
             uncached_input=self.uncached_input + other.uncached_input,
             cached_input=self.cached_input + other.cached_input,
             cache_write=self.cache_write + other.cache_write,
             output=self.output + other.output,
+            reported_total=(
+                self.total_tokens + other.total_tokens
+                if self.reported_total is not None or other.reported_total is not None else None
+            ),
+            total_source=source,
         )
 
 
@@ -106,6 +127,7 @@ class ModelUsage:
     tokens: TokenBreakdown = field(default_factory=TokenBreakdown)
     cost: CostBreakdown = field(default_factory=CostBreakdown)
     cache_savings: float = 0.0  # Dollars saved due to prompt caching
+    metric_totals: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass

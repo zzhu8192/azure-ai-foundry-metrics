@@ -66,6 +66,12 @@ class MetricsAggregator:
                 model_name = next((d.model_name for d in resource.deployments
                                    if d.name.lower() == deployment.lower() and d.model_name), deployment)
                 tokens = metrics.tokens.get(deployment, TokenBreakdown())
+                if tokens.total_difference:
+                    period.estimate_notes.append(
+                        f"{resource.name}/{deployment}: TotalTokens reports {tokens.total_tokens:,} "
+                        f"while input + output reports {tokens.component_total_tokens:,}. "
+                        "Displaying the reported total; the difference is not assigned to input/output or priced."
+                    )
                 uncached, cached, write, output, savings = self.pricing.calculate_cost(
                     model_name, tokens.uncached_input, tokens.cached_input, tokens.output, tokens.cache_write,
                 )
@@ -81,6 +87,7 @@ class MetricsAggregator:
                 period.models[key] = ModelUsage(
                     model_name, deployment, resource.name, resource.subscription_id,
                     resource.resource_group, tokens, cost, savings,
+                    metric_totals=metrics.metric_totals.get(deployment, {}),
                 )
         if fallback:
             period.estimate_notes.append(

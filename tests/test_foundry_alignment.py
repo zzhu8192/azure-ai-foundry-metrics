@@ -234,3 +234,57 @@ def test_invalid_range_rejected_before_auth(args):
     result = CliRunner().invoke(main, args)
     assert result.exit_code == 2
     assert "Azure Authentication Required" not in result.output
+
+
+def test_reported_total_preserves_discrepancy_without_inventing_input(resource):
+    # Synthetic component split illustrating the user's 26.62M vs 23.23M gap.
+    client = MonitorMetricsClient(MagicMock())
+    raw = {"value": [metric("InputTokens", [{"total": 23_000_000}]),
+                     metric("OutputTokens", [{"total": 230_000}]),
+                     metric("TotalTokens", [{"total": 26_620_000}])]}
+    tokens = client._parse_metrics_response(raw, resource)["gpt-6.1-sol"]
+    assert tokens.total_tokens == 26_620_000
+    assert tokens.component_total_tokens == 23_230_000
+    assert tokens.total_difference == 3_390_000
+    assert tokens.uncached_input == 23_000_000
+    assert tokens.output == 230_000
+    assert tokens.total_source == "TotalTokens"
+
+    aggregator = MetricsAggregator(MagicMock(), enable_cost_management=False)
+    aggregator.monitor_client = MagicMock()
+    aggregator.monitor_client.query_resource_metrics.return_value = ResourceMetrics(
+        tokens={"gpt-6.1-sol": tokens}, metric_totals={"gpt-6.1-sol": {"TotalTokens": 26_620_000}},
+    )
+    period = aggregator._collect_single_period(calculate_windows("utc")["today"], [resource])
+    assert period.total_tokens.total_tokens == 26_620_000
+    assert period.total_tokens.total_source == "TotalTokens"
+    # Rate-card cost uses actual input/output counts, not a guessed attribution.
+    assert period.total_cost.estimated_total_cost == pytest.approx(48.3)
+    assert any("input + output reports 23,230,000" in note for note in period.estimate_notes)
+    stream = io.StringIO()
+    render_dashboard([period], Console(file=stream), "json")
+    report = json.loads(stream.getvalue())[0]
+    assert report["total_tokens"]["reported_total_difference"] == 3_390_000
+    assert next(iter(report["models"].values()))["metric_totals"]["TotalTokens"] == 26_620_000
+
+
+@pytest.mark.parametrize("sample, expected_source, expected_total", [
+    (None, "input_plus_output", 100), (0, "TotalTokens", 0), (50, "TotalTokens", 50),
+])
+def test_missing_zero_and_lower_token_totals(resource, sample, expected_source, expected_total):
+    raw = {"value": [metric("InputTokens", [{"total": 100}]), metric("TotalTokens", [{"total": sample}])]}
+    tokens = MonitorMetricsClient(MagicMock())._parse_metrics_response(raw, resource)["gpt-6.1-sol"]
+    assert tokens.total_tokens == expected_total
+    assert tokens.total_source == expected_source
+    assert tokens.total_input == 100
+
+
+def test_mixed_token_total_sources():
+    from foundry_metrics.models import TokenBreakdown
+    portal = TokenBreakdown(uncached_input=100, reported_total=120, total_source="TotalTokens")
+    legacy = TokenBreakdown(uncached_input=200, output=10)
+    total = TokenBreakdown().add(portal).add(legacy)
+    assert total.total_tokens == 330
+    assert total.component_total_tokens == 310
+    assert total.total_difference == 20
+    assert total.total_source == "mixed"
