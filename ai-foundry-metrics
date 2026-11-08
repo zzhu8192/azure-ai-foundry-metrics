@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/.venv/bin/azure-ai-metrics" ]; then
-    exec "$SCRIPT_DIR/.venv/bin/azure-ai-metrics" "$@"
-else
-    exec python3 -m foundry_metrics.cli "$@"
-fi
+exec uv run --project "$SCRIPT_DIR" --locked azure-ai-metrics "$@"

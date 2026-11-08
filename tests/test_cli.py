@@ -1,7 +1,10 @@
 """Integration tests for CLI invocation and flags."""
 
+import csv
+import io
 import json
 from click.testing import CliRunner
+from rich.console import Console
 from foundry_metrics.cli import main
 
 
@@ -45,13 +48,25 @@ def test_cli_demo_json():
     assert data[0]["total_tokens"]["cached_input"] > 0
 
 
-def test_cli_demo_csv():
+def test_cli_demo_csv(monkeypatch):
+    monkeypatch.setattr("foundry_metrics.cli.console", Console(width=40))
     runner = CliRunner()
-    result = runner.invoke(main, ["--demo", "--period", "today", "--format", "csv"])
+    result = runner.invoke(main, ["--demo", "--format", "csv"])
     assert result.exit_code == 0
-    assert "Period,Resource,Deployment,Model" in result.output
-    assert "Today" in result.output
-    assert "gpt-4o" in result.output
+    reader = csv.DictReader(io.StringIO(result.output))
+    rows = list(reader)
+    assert len(reader.fieldnames) == 16
+    assert {row["Period"] for row in rows} == {
+        "Today", "Today - TOTAL",
+        "Current Week", "Current Week - TOTAL",
+        "Current Month", "Current Month - TOTAL",
+    }
+    assert any(row["Model"] == "gpt-4o" for row in rows)
+    for row in rows:
+        assert None not in row and None not in row.values()
+        assert int(row["UncachedInputTokens"]) > 0
+        assert int(row["TotalTokens"]) > 0
+        assert float(row["EstimatedCostUSD"]) > 0
 
 
 def test_cli_demo_summary():

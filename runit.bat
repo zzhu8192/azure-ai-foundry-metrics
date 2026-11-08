@@ -1,0 +1,1 @@
+uv run azure-ai-metrics --period 7d --timezone America/Chicago --deployment gpt-6.1-sol

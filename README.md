@@ -29,29 +29,32 @@ Provides a breakdown **per hosted model**:
 
 ### 1. Installation
 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first. The project requires Python 3.10 or newer; uv can install Python automatically if needed.
+
+These commands work in PowerShell, Bash, and other shells:
+
 ```bash
 # Clone or navigate to the repository
 cd azure-ai-foundry-metrics
 
-# Activate virtual environment
-source .venv/bin/activate
-
-# Install in editable mode
-pip install -e .
+# Install the project and dependencies from uv.lock
+uv sync --locked
 ```
+
+`uv sync` installs the project in editable mode and includes the development dependencies for testing. uv creates and manages `.venv` automatically; no manual creation or activation is needed. Run commands with `uv run` from the repository directory. For an installation without development dependencies, use `uv sync --locked --no-dev` and `uv run --locked --no-dev azure-ai-metrics`.
 
 ### 2. Try the Demo (Offline Preview)
 
 To see the dashboard immediately without connecting to Azure:
 
 ```bash
-./ai-foundry-metrics --demo
+uv run --locked azure-ai-metrics --demo
 ```
 
 Or view today only:
 
 ```bash
-./ai-foundry-metrics --demo --period today
+uv run --locked azure-ai-metrics --demo --period today
 ```
 
 ---
@@ -74,7 +77,7 @@ export AZURE_SUBSCRIPTION_ID="<your-subscription-id>"  # optional default
 If you do not have a Service Principal, run with `--device-code`:
 
 ```bash
-./ai-foundry-metrics --device-code
+uv run --locked azure-ai-metrics --device-code
 ```
 This prints a code and URL to authenticate in your browser.
 
@@ -89,7 +92,7 @@ az login
 Run the `auth` diagnostic command:
 
 ```bash
-./ai-foundry-metrics auth
+uv run --locked azure-ai-metrics auth
 ```
 
 ---
@@ -147,37 +150,37 @@ In JSON, `effective_usd` is a compatibility alias for the displayed estimate (`e
 
 ### Full Dashboard (Today, Week, Month + Comparison Summary)
 ```bash
-./ai-foundry-metrics
+uv run --locked azure-ai-metrics
 ```
 
 ### View Today Only
 ```bash
-./ai-foundry-metrics --period today
+uv run --locked azure-ai-metrics --period today
 ```
 
 ### View Compact Side-by-Side Summary
 ```bash
-./ai-foundry-metrics --format summary
+uv run --locked azure-ai-metrics --format summary
 ```
 
 ### Export to JSON (for Scripting or Piping to `jq`)
 ```bash
-./ai-foundry-metrics --period today --format json | jq '.[] | .total_cost'
+uv run --locked azure-ai-metrics --period today --format json | jq '.[] | .total_cost'
 ```
 
 ### Export to CSV
 ```bash
-./ai-foundry-metrics --format csv > usage_report.csv
+uv run --locked azure-ai-metrics --format csv > usage_report.csv
 ```
 
 ### Inspect Built-in Rate Card
 ```bash
-./ai-foundry-metrics rates
+uv run --locked azure-ai-metrics rates
 ```
 
 ### List Discovered AI Foundry Resources
 ```bash
-./ai-foundry-metrics resources
+uv run --locked azure-ai-metrics resources
 ```
 
 ---
@@ -199,7 +202,7 @@ If your organization has custom enterprise discounted rates (e.g. EA, MCA, or PT
 Then supply it via CLI:
 
 ```bash
-./ai-foundry-metrics --pricing-file pricing.custom.json
+uv run --locked azure-ai-metrics --pricing-file pricing.custom.json
 ```
 
 Or via environment variable:
@@ -225,6 +228,8 @@ export FOUNDRY_PRICING_FILE=pricing.custom.json
 ## Running Unit & Integration Tests
 
 ```bash
-source .venv/bin/activate
-pytest tests/
+uv sync --locked
+uv run --locked pytest tests/
 ```
+
+Dependencies are defined in `pyproject.toml` and pinned in `uv.lock`. After changing dependencies, run `uv lock` and commit both files.
