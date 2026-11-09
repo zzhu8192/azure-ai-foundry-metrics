@@ -27,9 +27,19 @@ class MetricsAggregator:
         target_name: Optional[str] = None, timezone_name: str = "local",
         periods_to_run: Optional[List[str]] = None, target_deployment: Optional[str] = None,
         start: Optional[str] = None, end: Optional[str] = None,
+        daily: bool = False, period: str = "all",
     ) -> List[PeriodUsage]:
-        windows = calculate_windows(tz_name=timezone_name, start=start, end=end)
-        active_periods = ["custom"] if start is not None else periods_to_run or ["today", "week", "month"]
+        windows = calculate_windows(
+            tz_name=timezone_name, start=start, end=end, daily=daily, period=period,
+        )
+        if start is not None:
+            active_periods = list(windows.keys()) if daily else ["custom"]
+        elif daily:
+            active_periods = list(windows.keys())
+        elif period.lower() == "all":
+            active_periods = periods_to_run or ["today", "week", "month"]
+        else:
+            active_periods = periods_to_run or [period.lower()]
         resources = self.discovery.discover_resources(
             subscription_ids=subscription_ids, target_rg=target_rg, target_name=target_name,
         )

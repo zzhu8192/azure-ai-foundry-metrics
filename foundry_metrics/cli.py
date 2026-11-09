@@ -30,9 +30,14 @@ console = Console(width=_target_w, height=40)
 @click.option(
     "--period",
     "-t",
-    type=click.Choice(["all", "today", "week", "month", "7d"], case_sensitive=False),
+    type=click.Choice(["all", "today", "3d", "week", "month", "7d"], case_sensitive=False),
     default="all",
-    help="Time period: today, calendar week/month, rolling 7d, or all (today/week/month).",
+    help="Time period: today, 3d, calendar week/month, rolling 7d, or all (today/week/month).",
+)
+@click.option(
+    "--daily",
+    is_flag=True,
+    help="Break out the selected period into daily windows (e.g. --period 7d --daily).",
 )
 @click.option(
     "--subscription-id",
@@ -93,6 +98,7 @@ console = Console(width=_target_w, height=40)
 def main(
     ctx: click.Context,
     period: str,
+    daily: bool,
     subscription_id: Optional[str],
     resource_group: Optional[str],
     resource_name: Optional[str],
@@ -114,17 +120,35 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
+    if daily and period.lower() == "all" and start is None:
+        period = "7d"
+
     try:
-        calculate_windows(tz_name=timezone, start=start, end=end)
+        windows = calculate_windows(
+            tz_name=timezone, start=start, end=end, daily=daily, period=period,
+        )
     except (ValueError, KeyError) as exc:
         raise click.UsageError(str(exc)) from exc
-    periods_to_run = ["custom"] if start is not None else (
-        ["today", "week", "month"] if period.lower() == "all" else [period.lower()]
-    )
+
+    if start is not None:
+        periods_to_run = list(windows.keys()) if daily else ["custom"]
+    elif daily:
+        periods_to_run = list(windows.keys())
+    elif period.lower() == "all":
+        periods_to_run = ["today", "week", "month"]
+    else:
+        periods_to_run = [period.lower()]
 
     # 1. Demo Mode
     if demo:
-        periods = get_demo_periods(timezone_name=timezone, periods_to_run=periods_to_run, start=start, end=end)
+        periods = get_demo_periods(
+            timezone_name=timezone,
+            periods_to_run=periods_to_run,
+            start=start,
+            end=end,
+            daily=daily,
+            period=period,
+        )
         if deployment:
             for sample in periods:
                 sample.models = {k: m for k, m in sample.models.items() if m.deployment_name.lower() == deployment.lower()}
@@ -163,6 +187,8 @@ def main(
                 target_deployment=deployment,
                 start=start,
                 end=end,
+                daily=daily,
+                period=period,
             )
         except Exception as exc:
             console.print(f"[bold red]Error querying Azure metrics:[/bold red] {exc}")

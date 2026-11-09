@@ -13,15 +13,22 @@ from foundry_metrics.pricing import PricingManager
 from foundry_metrics.time_windows import calculate_windows
 
 
-def get_demo_periods(timezone_name: str = "local", periods_to_run: Optional[List[str]] = None,
-                     start: Optional[str] = None, end: Optional[str] = None) -> List[PeriodUsage]:
+def get_demo_periods(
+    timezone_name: str = "local",
+    periods_to_run: Optional[List[str]] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    daily: bool = False,
+    period: str = "all",
+) -> List[PeriodUsage]:
     """Generate realistic demo usage metrics for Today, Current Week, and Current Month."""
-    windows = calculate_windows(tz_name=timezone_name, start=start, end=end)
+    windows = calculate_windows(tz_name=timezone_name, start=start, end=end, daily=daily, period=period)
     pricing = PricingManager()
 
-    # Scale factors: today=1x, week=5.5x, month=18x
+    # Scale factors: today=1x, 3d=3x, week=5.5x, month=18x, 7d=7x
     scales = {
         "today": 1.0,
+        "3d": 3.0,
         "week": 5.5,
         "month": 18.2,
         "7d": 7.0,
@@ -99,20 +106,28 @@ def get_demo_periods(timezone_name: str = "local", periods_to_run: Optional[List
     ]
 
     results: List[PeriodUsage] = []
+    keys = periods_to_run or (list(windows.keys()) if daily else ["today", "week", "month"])
+    ref_tz = windows[next(iter(windows))].start.tzinfo if windows else timezone.utc
+    now = datetime.now(ref_tz)
 
-    for p_key in periods_to_run or ("today", "week", "month"):
+    for idx, p_key in enumerate(keys):
+        if p_key not in windows:
+            continue
         w = windows[p_key]
-        mult = scales[p_key]
+        mult = scales.get(p_key, 1.0)
+        if daily and p_key not in scales:
+            mult = 0.9 + ((idx * 7) % 5) * 0.05
 
+        has_billing = p_key in ("3d", "week", "month") or (daily and w.end < now)
         period = PeriodUsage(
             period_name=w.name,
             start_time=w.start,
             end_time=w.end,
             timezone_name=w.timezone_name,
-            cost_management_available=(p_key in ("week", "month")),
+            cost_management_available=has_billing,
             cost_management_notes=(
                 "Reconciled with Azure Cost Management (sample billed data)"
-                if p_key in ("week", "month")
+                if has_billing
                 else "Real-time estimated costs via Azure Monitor metrics (Cost Management pending 4-24hr lag)"
             ),
         )
@@ -140,7 +155,7 @@ def get_demo_periods(timezone_name: str = "local", periods_to_run: Optional[List
 
             # In demo, simulated billed cost slightly matches or has minor variation
             billed = None
-            if p_key in ("week", "month"):
+            if has_billing:
                 billed = round((uncached_c + cached_c + write_c + out_c) * 0.98, 2)
 
             cost_obj = CostBreakdown(

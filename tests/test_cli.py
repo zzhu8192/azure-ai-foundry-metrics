@@ -77,3 +77,32 @@ def test_cli_demo_summary():
     assert "Today" in result.output
     assert "Current Week" in result.output
     assert "Current Month" in result.output
+
+
+def test_cli_demo_daily_default_7d():
+    runner = CliRunner()
+    result = runner.invoke(main, ["--demo", "--daily", "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert len(data) == 7
+    # Verify each element has a date period
+    for item in data:
+        assert len(item["period"]) == 10  # YYYY-MM-DD
+        assert "total_tokens" in item
+
+
+def test_cli_demo_daily_3d():
+    runner = CliRunner()
+    result = runner.invoke(main, ["--demo", "--period", "3d", "--daily", "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert len(data) == 3
+
+
+def test_cli_demo_3d_rolling():
+    runner = CliRunner()
+    result = runner.invoke(main, ["--demo", "--period", "3d", "--format", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert len(data) == 1
+    assert data[0]["period"] == "Last 3 Days"

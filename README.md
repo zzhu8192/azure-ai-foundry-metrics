@@ -103,8 +103,9 @@ uv run --locked azure-ai-metrics auth
 Usage: azure-ai-metrics [OPTIONS] [COMMAND] [ARGS]...
 
 Options:
-  -t, --period [all|today|week|month|7d]
+  -t, --period [all|today|3d|week|month|7d]
                                   Time period to report (default: all).
+  --daily                         Break out selected period into daily windows.
   -s, --subscription-id TEXT      Target Azure Subscription ID.
   -g, --resource-group TEXT       Filter by specific Resource Group.
   -r, --resource-name TEXT        Filter by specific AI Foundry / OpenAI resource.
@@ -147,6 +148,21 @@ uv run azure-ai-metrics --timezone America/Chicago --start 2026-10-31 --end 2026
 Foundry estimates are not invoices. Token and cost ingestion can lag independently. JSON and CSV include the estimate source, Foundry estimate, and rate-card estimate so differences remain visible. JSON also includes billing and estimate notes. See [Azure metric definitions](https://learn.microsoft.com/en-us/azure/foundry/openai/monitor-openai-reference) and [Foundry cost guidance](https://learn.microsoft.com/en-us/azure/foundry/concepts/manage-costs).
 
 In JSON, `effective_usd` is a compatibility alias for the displayed estimate (`estimated_usd`). Delayed actual charges are available separately as `billed_usd`.
+
+### Daily Breakout (e.g. Last 7 Days or Last 3 Days)
+
+Break down numbers into individual daily windows and view side-by-side:
+
+```bash
+# Break down the last 7 days day-by-day (default when --daily is specified alone)
+uv run azure-ai-metrics --daily
+
+# Break down the last 3 days day-by-day
+uv run azure-ai-metrics --period 3d --daily
+
+# Compact side-by-side summary table across individual days
+uv run azure-ai-metrics --period 7d --daily --format summary
+```
 
 ### Full Dashboard (Today, Week, Month + Comparison Summary)
 ```bash

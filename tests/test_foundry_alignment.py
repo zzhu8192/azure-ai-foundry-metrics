@@ -215,6 +215,7 @@ def test_chicago_windows_across_dst():
 
 
 @pytest.mark.parametrize("args, expected", [
+    (["--period", "3d"], "Last 3 Days"),
     (["--period", "7d"], "Last 7 Days"),
     (["--start", "2026-10-31", "--end", "2026-11-08"], "Custom"),
 ])

@@ -54,20 +54,58 @@ def parse_datetime(value: str, tz: tzinfo) -> datetime:
     return parsed.replace(tzinfo=tz) if parsed.tzinfo is None else parsed.astimezone(tz)
 
 
+def _split_into_daily_windows(
+    start_dt: datetime,
+    end_dt: datetime,
+    tz: tzinfo,
+    display_tz: str,
+) -> Dict[str, WindowBounds]:
+    """Split a continuous time range into individual calendar day WindowBounds."""
+    windows: Dict[str, WindowBounds] = {}
+    if start_dt.astimezone(timezone.utc) >= end_dt.astimezone(timezone.utc):
+        return windows
+
+    last_date = (end_dt - timedelta(microseconds=1)).date()
+    cur_date = start_dt.date()
+
+    while cur_date <= last_date:
+        day_start = max(start_dt, datetime.combine(cur_date, time.min, tzinfo=tz))
+        next_day_start = datetime.combine(cur_date + timedelta(days=1), time.min, tzinfo=tz)
+        day_end = min(end_dt, next_day_start)
+
+        if day_start < day_end:
+            day_str = cur_date.strftime("%Y-%m-%d")
+            windows[day_str] = WindowBounds(
+                name=day_str,
+                start=day_start,
+                end=day_end,
+                timezone_name=display_tz,
+            )
+        cur_date += timedelta(days=1)
+
+    return windows
+
+
 def calculate_windows(
     tz_name: str = "local",
     reference_dt: Optional[datetime] = None,
     start: Optional[str] = None,
     end: Optional[str] = None,
+    daily: bool = False,
+    period: str = "all",
 ) -> Dict[str, WindowBounds]:
-    """Calculate the exact bounds for Today, Current Week, and Current Month.
+    """Calculate the exact bounds for monitoring time windows.
 
     Args:
         tz_name: "local" or "utc" (or any IANA tz name like "America/Chicago")
         reference_dt: Optional reference datetime for testing/mocking.
+        start: Optional start ISO datetime for custom range.
+        end: Optional end ISO datetime for custom range.
+        daily: If True, break out the selected period/range into individual daily windows.
+        period: Time period name ("all", "today", "3d", "week", "month", "7d").
 
     Returns:
-        Dict mapping "today", "week", "month" to WindowBounds.
+        Dict mapping period names/dates to WindowBounds.
     """
     tz = get_timezone(tz_name)
     display_tz = str(tz)
@@ -83,9 +121,27 @@ def calculate_windows(
         custom_end = parse_datetime(end, tz) if end is not None else now
         if custom_start.astimezone(timezone.utc) >= custom_end.astimezone(timezone.utc):
             raise ValueError("--start must precede --end (the end is exclusive).")
+        if daily:
+            return _split_into_daily_windows(custom_start, custom_end, tz, display_tz)
         return {"custom": WindowBounds("Custom", custom_start, custom_end, display_tz)}
     if end is not None:
         raise ValueError("--end requires --start.")
+
+    if daily:
+        target_period = "7d" if period.lower() == "all" else period.lower()
+        if target_period == "3d":
+            p_start = datetime.combine(now.date() - timedelta(days=2), time.min, tzinfo=tz)
+        elif target_period == "7d":
+            p_start = datetime.combine(now.date() - timedelta(days=6), time.min, tzinfo=tz)
+        elif target_period == "week":
+            p_start = datetime.combine(now.date() - timedelta(days=now.weekday()), time.min, tzinfo=tz)
+        elif target_period == "month":
+            p_start = datetime.combine(now.date().replace(day=1), time.min, tzinfo=tz)
+        elif target_period == "today":
+            p_start = datetime.combine(now.date(), time.min, tzinfo=tz)
+        else:
+            p_start = datetime.combine(now.date() - timedelta(days=6), time.min, tzinfo=tz)
+        return _split_into_daily_windows(p_start, now, tz, display_tz)
 
     # 1. Today: Start of today (00:00:00) to now
     today_start = datetime.combine(now.date(), time.min, tzinfo=tz)
@@ -104,6 +160,12 @@ def calculate_windows(
         "today": WindowBounds(
             name="Today",
             start=today_start,
+            end=now,
+            timezone_name=display_tz,
+        ),
+        "3d": WindowBounds(
+            name="Last 3 Days",
+            start=(now.astimezone(timezone.utc) - timedelta(days=3)).astimezone(tz),
             end=now,
             timezone_name=display_tz,
         ),
